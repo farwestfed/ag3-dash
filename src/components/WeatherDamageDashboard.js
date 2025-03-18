@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
-  PieChart, Pie, Cell, LineChart, Line, ComposedChart, Area
+  PieChart, Pie, Cell, LineChart, Line, ComposedChart
 } from 'recharts';
 import Papa from 'papaparse';
 import _ from 'lodash';
@@ -86,9 +86,38 @@ const WeatherDamageDashboard = () => {
   const years = _.uniq(weatherData.map(item => item.Year)).sort();
   const weatherTypes = _.uniq(weatherData.map(item => item['Weather Event'])).sort();
 
+  // Helper function to normalize weather event types
+  const normalizeWeatherType = (type) => {
+    if (!type) return 'Other';
+    
+    // Convert to lowercase for consistent matching
+    const lowerType = type.toLowerCase();
+    
+    if (lowerType.includes('storm') && (lowerType.includes('winter') || lowerType.includes('arctic'))) {
+      return 'Winter Storm';
+    }
+    if (lowerType.includes('storm') || lowerType.includes('wind')) {
+      return 'Storm';
+    }
+    if (lowerType.includes('flood')) {
+      return 'Flooding';
+    }
+    if (lowerType.includes('hail')) {
+      return 'Hail';
+    }
+    if (lowerType.includes('hurricane') || lowerType.includes('tropical')) {
+      return 'Hurricane';
+    }
+    if (lowerType.includes('fire')) {
+      return 'Fire';
+    }
+    
+    return type; // Keep original if no match
+  };
+
   // Prepare data for charts
   const costByWeatherType = _.chain(filteredData)
-    .groupBy('Weather Event')
+    .groupBy(item => normalizeWeatherType(item['Weather Event']))
     .map((items, key) => ({ 
       name: key, 
       value: _.sumBy(items, 'Cost'),
@@ -197,6 +226,7 @@ const WeatherDamageDashboard = () => {
 
   // Weather events by cost impact for bar chart
   const weatherEventsByCost = _.chain(costByWeatherType)
+    .filter(item => item.value > 0)  // Only include events with costs
     .orderBy(['value'], ['desc'])
     .map((item) => ({
       name: item.name,
@@ -344,21 +374,21 @@ const WeatherDamageDashboard = () => {
                   />
                   <Tooltip formatter={(value) => formatCurrency(value)} />
                   <Legend />
-                  <Area 
+                  <Line 
                     type="monotone" 
                     dataKey="upperBound" 
-                    fill="#FF8042" 
                     stroke="#FF8042" 
-                    fillOpacity={0.3} 
-                    name="Upper Bound" 
+                    strokeWidth={2}
+                    name="Upper Bound"
+                    dot={{ r: 4 }}
                   />
-                  <Area 
+                  <Line 
                     type="monotone" 
                     dataKey="lowerBound" 
-                    fill="#00C49F" 
                     stroke="#00C49F" 
-                    fillOpacity={0.3} 
-                    name="Lower Bound" 
+                    strokeWidth={2}
+                    name="Lower Bound"
+                    dot={{ r: 4 }}
                   />
                   <Line 
                     type="monotone" 
@@ -468,7 +498,19 @@ const WeatherDamageDashboard = () => {
                   margin={{ top: 5, right: 30, left: 200, bottom: 5 }}
                 >
                   <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis type="number" tickFormatter={(value) => formatCurrency(value)} />
+                  <XAxis 
+                    type="number" 
+                    scale="log" 
+                    domain={['auto', 'auto']}
+                    tickFormatter={(value) => {
+                      if (value >= 1000000) {
+                        return `$${(value / 1000000).toFixed(1)}M`;
+                      } else if (value >= 1000) {
+                        return `$${(value / 1000).toFixed(1)}K`;
+                      }
+                      return `$${value}`;
+                    }}
+                  />
                   <YAxis 
                     type="category" 
                     dataKey="name" 
@@ -478,7 +520,16 @@ const WeatherDamageDashboard = () => {
                       fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
                     }}
                   />
-                  <Tooltip formatter={(value) => formatCurrency(value)} />
+                  <Tooltip 
+                    formatter={(value) => {
+                      if (value >= 1000000) {
+                        return [`$${(value / 1000000).toFixed(2)}M`, 'Cost'];
+                      } else if (value >= 1000) {
+                        return [`$${(value / 1000).toFixed(2)}K`, 'Cost'];
+                      }
+                      return [`$${value.toFixed(2)}`, 'Cost'];
+                    }}
+                  />
                   <Bar dataKey="value" fill="#8884d8" />
                 </BarChart>
               </ResponsiveContainer>
