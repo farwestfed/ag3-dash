@@ -285,8 +285,32 @@ h3 {
 }
 
 .chart-container {
-  height: 300px;
-  margin-bottom: 1.5rem;
+  position: relative;
+  width: 100%;
+  height: 400px;
+  margin-bottom: 2rem;
+  background-color: white;
+  border-radius: 0.5rem;
+  padding: 1rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.recharts-wrapper {
+  position: relative;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.recharts-surface {
+  width: 100%;
+  height: 100%;
+}
+
+/* Ensure charts are visible */
+.recharts-responsive-container {
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 400px;
 }
 
 .chart-half-container {
