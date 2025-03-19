@@ -24,6 +24,73 @@ const INSTALLATION_COORDINATES = {
   'Fort Polk': { lat: 31.0445, lng: -93.2035 }
 };
 
+// Helper function to normalize weather event types
+const normalizeWeatherType = (type) => {
+  if (!type) return 'Other';
+  
+  // Convert to lowercase for consistent matching
+  const lowerType = type.toLowerCase().trim();
+  
+  // Hurricane/Tropical Storm category
+  if (lowerType.includes('hurricane') || 
+      lowerType.includes('tropical') ||
+      lowerType.includes('cyclone') ||
+      lowerType.includes('mawar')) {
+    return 'Hurricane/Tropical Storm';
+  }
+  
+  // Winter Weather category
+  if (lowerType.includes('winter') || 
+      lowerType.includes('snow') || 
+      lowerType.includes('arctic') ||
+      lowerType.includes('ice')) {
+    return 'Winter Storm';
+  }
+  
+  // Severe Storm category
+  if (lowerType.includes('storm') || 
+      lowerType.includes('wind') ||
+      lowerType.includes('nor\'easter') ||
+      lowerType.includes('atmospheric river')) {
+    return 'Severe Storm';
+  }
+  
+  // Flooding category
+  if (lowerType.includes('flood') ||
+      lowerType.includes('water') ||
+      lowerType.includes('rain')) {
+    return 'Flooding';
+  }
+  
+  // Tornado category
+  if (lowerType.includes('tornado') ||
+      lowerType.includes('torando')) {  // Handle common misspelling
+    return 'Tornado';
+  }
+  
+  // Hail category
+  if (lowerType.includes('hail')) {
+    return 'Hail';
+  }
+  
+  // Fire category
+  if (lowerType.includes('fire')) {
+    return 'Fire';
+  }
+  
+  // Earthquake category
+  if (lowerType.includes('earthquake')) {
+    return 'Earthquake';
+  }
+  
+  // Wave category
+  if (lowerType.includes('wave')) {
+    return 'Wave';
+  }
+  
+  return 'Other';
+};
+
 const WeatherDamageDashboard = () => {
   const [weatherData, setWeatherData] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -42,7 +109,7 @@ const WeatherDamageDashboard = () => {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const response = await fetch('/army_wx_data.csv');
+        const response = await fetch('/ag3_data_v3.csv');
         const csvText = await response.text();
         
         Papa.parse(csvText, {
@@ -51,12 +118,26 @@ const WeatherDamageDashboard = () => {
             // Clean and transform the data
             const cleanedData = results.data
               .filter(item => item.Cost && !isNaN(parseFloat(item.Cost)))
-              .map(item => ({
-                ...item,
-                Cost: parseFloat(item.Cost),
-                Year: item.Year ? parseFloat(item.Year) : new Date(item['Date of Weather Event']).getFullYear(),
-                date: new Date(item['Date of Weather Event'])
-              }));
+              .map(item => {
+                // Parse date from MM/DD/YY format
+                const dateParts = item['Date of Weather Event'].split('/');
+                const date = new Date(
+                  2000 + parseInt(dateParts[2]), // Year
+                  parseInt(dateParts[0]) - 1,    // Month (0-based)
+                  parseInt(dateParts[1])         // Day
+                );
+                
+                return {
+                  ...item,
+                  Cost: parseFloat(item.Cost),
+                  Year: date.getFullYear(),
+                  date: date,
+                  // Add named storm information if available
+                  weatherEventFull: item['Named Storm'] 
+                    ? `${item['Weather Event']} (${item['Named Storm']})`
+                    : item['Weather Event']
+                };
+              });
             
             setWeatherData(cleanedData);
             setLoading(false);
@@ -78,42 +159,24 @@ const WeatherDamageDashboard = () => {
   // Filter data based on selections
   const filteredData = weatherData.filter(item => {
     if (selectedYear !== 'all' && item.Year !== parseFloat(selectedYear)) return false;
-    if (selectedWeatherType !== 'all' && item['Weather Event'] !== selectedWeatherType) return false;
+    if (selectedWeatherType !== 'all' && normalizeWeatherType(item['Weather Event']) !== selectedWeatherType) return false;
     return true;
   });
 
   // Get available years and weather event types for filters
   const years = _.uniq(weatherData.map(item => item.Year)).sort();
-  const weatherTypes = _.uniq(weatherData.map(item => item['Weather Event'])).sort();
+  const weatherTypes = _.uniq(weatherData.map(item => normalizeWeatherType(item['Weather Event']))).sort();
 
-  // Helper function to normalize weather event types
-  const normalizeWeatherType = (type) => {
-    if (!type) return 'Other';
-    
-    // Convert to lowercase for consistent matching
-    const lowerType = type.toLowerCase();
-    
-    if (lowerType.includes('storm') && (lowerType.includes('winter') || lowerType.includes('arctic'))) {
-      return 'Winter Storm';
-    }
-    if (lowerType.includes('storm') || lowerType.includes('wind')) {
-      return 'Storm';
-    }
-    if (lowerType.includes('flood')) {
-      return 'Flooding';
-    }
-    if (lowerType.includes('hail')) {
-      return 'Hail';
-    }
-    if (lowerType.includes('hurricane') || lowerType.includes('tropical')) {
-      return 'Hurricane';
-    }
-    if (lowerType.includes('fire')) {
-      return 'Fire';
-    }
-    
-    return type; // Keep original if no match
-  };
+  // Weather events by cost impact for bar chart
+  const weatherEventsByCost = _.chain(filteredData)
+    .groupBy(item => item.weatherEventFull)
+    .map((items, key) => ({
+      name: key,
+      value: _.sumBy(items, 'Cost'),
+      normalizedType: normalizeWeatherType(items[0]['Weather Event'])
+    }))
+    .orderBy(['value'], ['desc'])
+    .value();
 
   // Prepare data for charts
   const costByWeatherType = _.chain(filteredData)
@@ -123,6 +186,7 @@ const WeatherDamageDashboard = () => {
       value: _.sumBy(items, 'Cost'),
       percentage: Math.round((_.sumBy(items, 'Cost') / _.sumBy(filteredData, 'Cost')) * 100)
     }))
+    .orderBy(['value'], ['desc'])
     .value();
 
   const costByInstallation = _.chain(filteredData)
@@ -222,29 +286,6 @@ const WeatherDamageDashboard = () => {
       minimumFractionDigits: 0,
       maximumFractionDigits: 0
     }).format(value);
-  };
-
-  // Weather events by cost impact for bar chart
-  const weatherEventsByCost = _.chain(costByWeatherType)
-    .filter(item => item.value > 0)  // Only include events with costs
-    .orderBy(['value'], ['desc'])
-    .map((item) => ({
-      name: item.name,
-      value: item.value
-    }))
-    .value();
-
-  // Helper function to simplify weather event names for the pie chart
-  const simplifyWeatherEvents = () => {
-    // Create a synthetic pie chart based on the screenshot
-    return [
-      { name: 'Hurricane', value: 30 },
-      { name: 'Flood', value: 22 },
-      { name: 'Tornado', value: 19 },
-      { name: 'Wildfire', value: 14 },
-      { name: 'Winter Storm', value: 11 },
-      { name: 'Extreme Heat', value: 4 }
-    ];
   };
 
   const InsightBox = ({ title, insights }) => (
@@ -363,6 +404,16 @@ const WeatherDamageDashboard = () => {
           <div>
             <h2>Projected Damage Costs (5-Year Forecast)</h2>
             
+            <div className="info-box">
+              <h3>Forecast Insights</h3>
+              <ul className="list-disc">
+                <li>Based on historical patterns, damage costs are projected to increase by approximately 15% annually</li>
+                <li>Implementing preventative measures could reduce projected costs by 25-40%</li>
+                <li>Highest risk period for all installations is during hurricane season (June-November)</li>
+                <li>Cost-benefit analysis suggests prioritizing infrastructure hardening at high-risk installations</li>
+              </ul>
+            </div>
+
             <div className="chart-container">
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart data={forecastData}>
@@ -402,11 +453,18 @@ const WeatherDamageDashboard = () => {
               </ResponsiveContainer>
             </div>
             
-            <p style={{color: '#718096', marginBottom: '1.5rem'}}>
-              Prediction model based on historical damage patterns with confidence intervals.
-            </p>
-            
             <h2>Historical Yearly Trends</h2>
+            <div className="info-box">
+              <h3>Historical Trend Insights</h3>
+              <p>Analysis of yearly damage costs from {Math.min(...years)} to {Math.max(...years)} shows a {
+                costTrend[costTrend.length - 1].value > costTrend[0].value ? 'rising' : 'varying'
+              } trend in weather-related damages. The data indicates {
+                costTrend.reduce((max, current) => current.count > max.count ? current : max, costTrend[0]).name
+              } had the highest number of weather events (${
+                costTrend.reduce((max, current) => current.count > max.count ? current : max, costTrend[0]).count
+              } events).</p>
+            </div>
+
             <div className="chart-container">
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart data={costTrend}>
@@ -444,107 +502,121 @@ const WeatherDamageDashboard = () => {
                 </ComposedChart>
               </ResponsiveContainer>
             </div>
-            
-            <div className="info-box">
-              <h3>Forecast Insights</h3>
-              <ul className="list-disc">
-                <li>Based on historical patterns, damage costs are projected to increase by approximately 15% annually</li>
-                <li>Implementing preventative measures could reduce projected costs by 25-40%</li>
-                <li>Highest risk period for all installations is during hurricane season (June-November)</li>
-                <li>Cost-benefit analysis suggests prioritizing infrastructure hardening at high-risk installations</li>
-              </ul>
-            </div>
-
-            <InsightBox
-              title="Damage Cost Forecast Analysis"
-              insights="The 5-year forecast indicates a consistent upward trend in weather-related damage costs, with an estimated 36% increase by 2029. Immediate implementation of mitigation strategies is recommended to reduce the projected $32.5M peak damage cost."
-            />
           </div>
         )}
         
         {activeTab === 'event-analysis' && (
           <div>
-            <h2>Cost by Weather Event Type</h2>
-            
-            <div className="chart-container" style={{height: '350px'}}>
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={simplifyWeatherEvents()}
-                    cx="50%"
-                    cy="50%"
-                    labelLine={true}
-                    outerRadius={130}
-                    fill="#8884d8"
-                    dataKey="value"
-                    nameKey="name"
-                    label={({ name, value }) => `${name}: ${value}%`}
-                  >
-                    {simplifyWeatherEvents().map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Legend />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
-            
-            <h2>Top Weather Events by Cost Impact</h2>
-            <div className="chart-container">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  data={weatherEventsByCost}
-                  layout="vertical"
-                  margin={{ top: 5, right: 30, left: 200, bottom: 5 }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis 
-                    type="number" 
-                    scale="log" 
-                    domain={['auto', 'auto']}
-                    tickFormatter={(value) => {
-                      if (value >= 1000000) {
-                        return `$${(value / 1000000).toFixed(1)}M`;
-                      } else if (value >= 1000) {
-                        return `$${(value / 1000).toFixed(1)}K`;
-                      }
-                      return `$${value}`;
-                    }}
-                  />
-                  <YAxis 
-                    type="category" 
-                    dataKey="name" 
-                    width={180}
-                    style={{
-                      fontSize: '12px',
-                      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
-                    }}
-                  />
-                  <Tooltip 
-                    formatter={(value) => {
-                      if (value >= 1000000) {
-                        return [`$${(value / 1000000).toFixed(2)}M`, 'Cost'];
-                      } else if (value >= 1000) {
-                        return [`$${(value / 1000).toFixed(2)}K`, 'Cost'];
-                      }
-                      return [`$${value.toFixed(2)}`, 'Cost'];
-                    }}
-                  />
-                  <Bar dataKey="value" fill="#8884d8" />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-
             <InsightBox
               title="Event Type Distribution Insights"
-              insights="Hurricanes and floods account for over 50% of total damage costs, highlighting the critical need for storm-resistant infrastructure and improved drainage systems. Focus mitigation efforts on these high-impact events for maximum ROI."
+              insights={`${costByWeatherType[0]?.name || 'Weather events'} account for ${costByWeatherType[0]?.percentage || 0}% of total damage costs. ${
+                costByWeatherType[1]?.name ? `${costByWeatherType[1].name} follows with ${costByWeatherType[1].percentage}% of costs.` : ''
+              } This analysis highlights the need for targeted infrastructure improvements and mitigation strategies for these high-impact events.`}
             />
+
+            <div style={{ display: 'grid', gridTemplateColumns: '0.8fr 1.2fr', gap: '2rem', marginBottom: '2rem' }}>
+              <div>
+                <h2>Cost by Weather Event Type</h2>
+                <div className="chart-container" style={{height: '400px'}}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={costByWeatherType}
+                        cx="40%"
+                        cy="50%"
+                        labelLine={false}
+                        outerRadius={100}
+                        fill="#8884d8"
+                        dataKey="value"
+                        nameKey="name"
+                        label={({ name, percent }) => {
+                          // Only show label if percentage is 2% or greater
+                          return percent >= 0.02 ? `${name}: ${(percent * 100).toFixed(1)}%` : '';
+                        }}
+                        labelStyle={{ 
+                          fontSize: '10px', 
+                          fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
+                        }}
+                      >
+                        {costByWeatherType.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                        ))}
+                      </Pie>
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+              
+              <div>
+                <h2>Top Weather Events by Cost Impact</h2>
+                <div className="chart-container" style={{ height: '400px' }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart
+                      data={weatherEventsByCost}
+                      layout="vertical"
+                      margin={{ top: 5, right: 30, left: 5, bottom: 5 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis 
+                        type="number" 
+                        scale="log" 
+                        domain={['auto', 'auto']}
+                        tickFormatter={(value) => {
+                          if (value >= 1000000) {
+                            return `$${(value / 1000000).toFixed(1)}M`;
+                          } else if (value >= 1000) {
+                            return `$${(value / 1000).toFixed(1)}K`;
+                          }
+                          return `$${value}`;
+                        }}
+                      />
+                      <YAxis 
+                        type="category" 
+                        dataKey="name" 
+                        width={240}
+                        style={{
+                          fontSize: '13px',
+                          fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
+                        }}
+                        tick={props => (
+                          <text
+                            {...props}
+                            fill="#4a5568"
+                            textAnchor="end"
+                            dominantBaseline="middle"
+                            x={props.x - 10}
+                          >
+                            {props.payload.value}
+                          </text>
+                        )}
+                      />
+                      <Tooltip 
+                        formatter={(value) => {
+                          if (value >= 1000000) {
+                            return [`$${(value / 1000000).toFixed(2)}M`, 'Cost'];
+                          } else if (value >= 1000) {
+                            return [`$${(value / 1000).toFixed(2)}K`, 'Cost'];
+                          }
+                          return [`$${value.toFixed(2)}`, 'Cost'];
+                        }}
+                      />
+                      <Bar dataKey="value" fill="#8884d8" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            </div>
           </div>
         )}
         
         {activeTab === 'geographic-analysis' && (
           <div>
             <h2>Geographic Distribution of Weather Damage</h2>
+            
+            <InsightBox
+              title="Geographic Distribution Insights"
+              insights="The heatmap reveals concentrated damage patterns in coastal and storm-prone regions, with installations in the Southeast showing particularly high impact. This geographic analysis suggests the need for region-specific mitigation strategies."
+            />
             
             <div className="chart-container" style={{height: '500px', marginBottom: '2rem'}}>
               <MapContainer
@@ -582,12 +654,14 @@ const WeatherDamageDashboard = () => {
               </MapContainer>
             </div>
             
+            <h2>Top 10 Impacted Installations</h2>
             <InsightBox
-              title="Geographic Distribution Insights"
-              insights="The heatmap reveals concentrated damage patterns in coastal and storm-prone regions, with installations in the Southeast showing particularly high impact. This geographic analysis suggests the need for region-specific mitigation strategies."
+              title="Installation Impact Analysis"
+              insights={`${costByInstallation[0]?.name || 'Installations'} leads with ${formatCurrency(costByInstallation[0]?.value || 0)} in damages, followed by ${costByInstallation[1]?.name} (${formatCurrency(costByInstallation[1]?.value || 0)}). The top 3 installations account for ${
+                Math.round((costByInstallation.slice(0, 3).reduce((sum, inst) => sum + inst.value, 0) / totalCost) * 100)
+              }% of total damages.`}
             />
             
-            <h2>Top 10 Impacted Installations</h2>
             <div className="chart-container">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart
@@ -611,17 +685,19 @@ const WeatherDamageDashboard = () => {
                 </BarChart>
               </ResponsiveContainer>
             </div>
-
-            <InsightBox
-              title="Geographic Risk Assessment"
-              insights="Coastal and southern installations show consistently higher damage costs, indicating a need for region-specific mitigation strategies and enhanced storm protection measures in these high-risk areas."
-            />
           </div>
         )}
         
         {activeTab === 'scenario-modeling' && (
           <div>
             <h2>Scenario Modeling & Impact Analysis</h2>
+            
+            <InsightBox
+              title="Mitigation Strategy Analysis"
+              insights={`Based on historical damage patterns, we've identified ${scenarios.length} key mitigation strategies. These strategies target the most impactful weather events: ${
+                costByWeatherType.slice(0, 3).map(type => type.name).join(', ')
+              }. Select combinations of strategies to model their potential impact on damage reduction.`}
+            />
             
             <div className="chart-half-container">
               <div className="chart-card" style={{backgroundColor: '#f7fafc'}}>
@@ -702,19 +778,21 @@ const WeatherDamageDashboard = () => {
                 </div>
               </div>
             </div>
-            
-            <InsightBox
-              title="Scenario Analysis Insights"
-              insights={`Implementing ${selectedScenarios.length} selected mitigation measures would result in ${
-                formatCurrency(scenarioResults.savings)
-              } in savings. The optimal scenario combines all measures for maximum impact and ROI.`}
-            />
           </div>
         )}
         
         {activeTab === 'budget-planning' && (
           <div>
             <h2>Budget Planning & Resource Allocation</h2>
+            
+            <InsightBox
+              title="Investment Strategy Overview"
+              insights={`Based on ${years.length} years of historical data, we recommend focusing investments on ${
+                costByWeatherType.slice(0, 2).map(type => type.name).join(' and ')
+              } protection, which account for ${
+                costByWeatherType.slice(0, 2).reduce((sum, type) => sum + type.percentage, 0)
+              }% of total damages. The proposed 5-year investment strategy targets these high-impact areas.`}
+            />
             
             <div className="chart-half-container">
               <div className="chart-card">
@@ -749,26 +827,24 @@ const WeatherDamageDashboard = () => {
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
                       <Pie
-                        data={[
-                          { name: 'Hurricane', value: 35 },
-                          { name: 'Flood', value: 25 },
-                          { name: 'Tornado', value: 15 },
-                          { name: 'Wildfire', value: 15 },
-                          { name: 'Winter Storm', value: 10 }
-                        ]}
+                        data={costByWeatherType}
                         cx="50%"
                         cy="50%"
-                        labelLine={true}
-                        outerRadius={80}
+                        labelLine={false}
+                        outerRadius={160}
                         fill="#8884d8"
                         dataKey="value"
-                        label={({ name, value }) => `${name}: ${value}%`}
+                        nameKey="name"
+                        label={({ name, percent }) => {
+                          // Only show label if percentage is 2% or greater
+                          return percent >= 0.02 ? `${name}: ${(percent * 100).toFixed(1)}%` : '';
+                        }}
+                        labelStyle={{ fontSize: '10px', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' }}
                       >
-                        {simplifyWeatherEvents().map((entry, index) => (
+                        {costByWeatherType.map((entry, index) => (
                           <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                         ))}
                       </Pie>
-                      <Legend />
                     </PieChart>
                   </ResponsiveContainer>
                 </div>
@@ -787,46 +863,6 @@ const WeatherDamageDashboard = () => {
           </div>
         )}
       </div>
-      
-      {/* Investment Decision Support Section - visible on all tabs */}
-      <div className="card">
-        <h2>Infrastructure Investment Decision Support</h2>
-        <p style={{color: '#4a5568', marginBottom: '1rem'}}>
-          This dashboard helps decision makers prioritize infrastructure investments based on historical weather damage data.
-          Key insights:
-        </p>
-        <ul className="list-disc" style={{color: '#4a5568', marginBottom: '1rem'}}>
-          <li>Identify installations with highest financial impact from weather events</li>
-          <li>Understand seasonal patterns to prepare for high-risk periods</li>
-          <li>Compare damage patterns across weather event types to prioritize mitigation efforts</li>
-          <li>Analyze cost trends to forecast future infrastructure needs</li>
-        </ul>
-        <div className="info-box">
-          <h3>Recommendation Highlights</h3>
-          <p>
-            {costByInstallation.length > 0 ? (
-              <>Focus infrastructure hardening efforts on <strong>{costByInstallation[0].name}</strong>, which has experienced the highest weather-related costs.</>
-            ) : (
-              <>Insufficient data to make specific recommendations.</>
-            )}
-          </p>
-        </div>
-      </div>
-
-      <InsightBox
-        title="Historical Trend Analysis"
-        insights="Analysis shows a significant correlation between event frequency and total costs, with peak damage periods aligning with severe weather seasons. This pattern suggests the need for seasonal preparedness and targeted infrastructure improvements."
-      />
-
-      <InsightBox
-        title="Cost Impact Analysis"
-        insights="Hail and winter storms emerge as the most financially impactful weather events, suggesting a need to prioritize protective infrastructure and cold-weather resilience measures across affected installations."
-      />
-
-      <InsightBox
-        title="Installation Impact Analysis"
-        insights="The top three installations account for 45% of total weather-related costs, presenting an opportunity for targeted infrastructure improvements that could significantly reduce overall damage expenses."
-      />
     </div>
   );
 };
